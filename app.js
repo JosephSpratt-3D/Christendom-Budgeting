@@ -5,6 +5,8 @@ const SUPABASE_BUCKET = "budget-files";
 const AUTH_REDIRECT_URL = "https://josephspratt-3d.github.io/Christendom-Budgeting/";
 const TAB_ORDER_STORAGE_KEY = "christendomBudgetTabOrder";
 const ACCOUNT_TOTAL_MODE_STORAGE_KEY = "christendomBudgetAccountTotalMode";
+const BUDGET_TEMPLATE_SETTING_KEY = "budget_reset_template";
+const LAST_AUTO_BUDGET_RESET_MONTH_KEY = "last_auto_budget_reset_month";
 const DEFAULT_TABS = [
   { id: "add", label: "Add" },
   { id: "dashboard", label: "Dashboard" },
@@ -164,6 +166,7 @@ const els = {
   budgetSubmitButton: document.getElementById("budgetSubmitButton"),
   cancelBudgetEditButton: document.getElementById("cancelBudgetEditButton"),
   deleteBudgetEditButton: document.getElementById("deleteBudgetEditButton"),
+  saveBudgetTemplateButton: document.getElementById("saveBudgetTemplateButton"),
   resetBudgetDefaultsButton: document.getElementById("resetBudgetDefaultsButton"),
   budgetExpectedValue: document.getElementById("budgetExpectedValue"),
   budgetAllocatedValue: document.getElementById("budgetAllocatedValue"),
@@ -771,6 +774,31 @@ function run(sql, params) {
   state.dirty = true;
 }
 
+function getSetting(key) {
+  const row = one("SELECT value FROM settings WHERE key = ?", [key]);
+  return row ? String(row.value || "") : "";
+}
+
+function setSetting(key, value) {
+  run(
+    `INSERT INTO settings(key, value)
+     VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    [key, String(value)],
+  );
+}
+
+function previousMonth(month) {
+  const parts = String(month || currentMonth()).split("-");
+  const year = Number(parts[0]);
+  const monthIndex = Number(parts[1]);
+  if (!year || !monthIndex) {
+    return currentMonth();
+  }
+  const date = new Date(Date.UTC(year, monthIndex - 2, 1));
+  return date.toISOString().slice(0, 7);
+}
+
 function migrateDatabase() {
   state.db.run("PRAGMA foreign_keys = ON");
   state.db.run(`
@@ -1104,16 +1132,23 @@ async function openDatabase() {
   state.db = bytes ? new SQL.Database(bytes) : new SQL.Database();
   migrateDatabase();
   state.dirty = !bytes;
-  syncDebtBudgetIfNeeded(state.month);
+  const autoResetResult = await autoResetCurrentMonthBudget();
+  if (!autoResetResult.changed) {
+    syncDebtBudgetIfNeeded(state.month);
+  }
   const recurringResult = processDueRecurringTransactions();
   renderAll();
   setReady(true);
   updateAuthUi();
   startAutoSyncChecks();
   activateTab("add");
-  if (recurringResult.created > 0 || recurringResult.advanced > 0) {
+  if (autoResetResult.changed || recurringResult.created > 0 || recurringResult.advanced > 0) {
     await saveDatabase();
-    showStatus("Budget loaded. Added " + recurringResult.created + " recurring transaction(s).");
+    if (autoResetResult.changed) {
+      showStatus("Budget loaded. New month reset from saved budget with " + autoResetResult.carryCount + " carry-forward categor" + (autoResetResult.carryCount === 1 ? "y" : "ies") + ".");
+    } else {
+      showStatus("Budget loaded. Added " + recurringResult.created + " recurring transaction(s).");
+    }
   } else {
     showStatus(bytes ? "Budget loaded. Ready to enter transactions." : "No saved budget found. A new one is ready to save.");
   }
@@ -1199,6 +1234,7 @@ function startAutoSyncChecks() {
   }
   state.autoSyncTimer = window.setInterval(function () {
     checkForRemoteUpdates(true)
+      .then(function () { return ensureMonthlyBudgetResetCurrent(true); })
       .then(function () { return ensureRecurringTransactionsCurrent(true); })
       .catch(function (error) {
         state.syncMessage = "sync check failed";
@@ -2954,25 +2990,160 @@ function clearBudgetEditMode() {
   closeEditModal(true);
 }
 
-async function resetBudgetFromDefaults() {
-  if (!confirm("Reset this month from category default budgets? Existing expected income and planned amounts for those categories will be replaced.")) {
+function budgetTemplateRows() {
+  const saved = getSetting(BUDGET_TEMPLATE_SETTING_KEY);
+  if (saved) {
+    try {
+      const template = JSON.parse(saved);
+      if (template && Array.isArray(template.rows)) {
+        return template.rows.map(function (row) {
+          return {
+            category_id: Number(row.category_id),
+            planned: Number(row.planned || 0),
+            carry_forward: Number(row.carry_forward || 0) === 1 ? 1 : 0,
+          };
+        }).filter(function (row) {
+          return row.category_id
+            && Number.isFinite(row.planned)
+            && Boolean(one("SELECT id FROM categories WHERE id = ?", [row.category_id]));
+        });
+      }
+    } catch (_error) {
+      return [];
+    }
+  }
+  return all("SELECT id category_id, monthly_limit planned, 0 carry_forward FROM categories WHERE monthly_limit > 0");
+}
+
+function carryForwardAdjustments(targetMonth) {
+  const sourceMonth = previousMonth(targetMonth);
+  const rows = all(`
+    SELECT b.category_id,
+      b.planned - COALESCE(SUM(CASE WHEN t.type = 'expense' THEN t.amount ELSE 0 END), 0) remaining
+    FROM budgets b
+    JOIN categories c ON c.id = b.category_id AND c.kind = 'expense'
+    LEFT JOIN transactions t
+      ON t.category_id = b.category_id
+      AND substr(t.date, 1, 7) = b.month
+      AND COALESCE(t.source, '') <> 'transfer'
+    WHERE b.month = ? AND b.carry_forward = 1
+    GROUP BY b.id
+  `, [sourceMonth]);
+  return rows.reduce(function (adjustments, row) {
+    const amount = Number(row.remaining || 0);
+    if (Math.abs(amount) >= 0.005) {
+      adjustments[Number(row.category_id)] = amount;
+    }
+    return adjustments;
+  }, {});
+}
+
+function applyBudgetTemplate(month) {
+  const templateRows = budgetTemplateRows();
+  if (!templateRows.length) {
+    throw new Error("Save a reset budget first, or set category default budgets before resetting.");
+  }
+  const carryAdjustments = carryForwardAdjustments(month);
+  const merged = {};
+  templateRows.forEach(function (row) {
+    merged[row.category_id] = {
+      planned: Number(row.planned || 0),
+      carry_forward: Number(row.carry_forward || 0) === 1 ? 1 : 0,
+    };
+  });
+  Object.keys(carryAdjustments).forEach(function (categoryIdValue) {
+    const id = Number(categoryIdValue);
+    if (!merged[id]) {
+      merged[id] = { planned: 0, carry_forward: 1 };
+    }
+    merged[id].planned += Number(carryAdjustments[id] || 0);
+    merged[id].carry_forward = 1;
+  });
+  run("DELETE FROM budgets WHERE month = ?", [month]);
+  Object.keys(merged).forEach(function (categoryIdValue) {
+    const id = Number(categoryIdValue);
+    run(
+      `INSERT INTO budgets(month, category_id, planned, carry_forward)
+       VALUES (?, ?, ?, ?)`,
+      [month, id, Number(merged[id].planned || 0), merged[id].carry_forward],
+    );
+  });
+  syncDebtBudgetIfNeeded(month);
+  return {
+    templateCount: templateRows.length,
+    carryCount: Object.keys(carryAdjustments).length,
+  };
+}
+
+async function saveBudgetTemplate() {
+  const month = state.month;
+  const rows = all(`
+    SELECT b.category_id, b.planned, b.carry_forward
+    FROM budgets b
+    JOIN categories c ON c.id = b.category_id
+    WHERE b.month = ?
+    ORDER BY c.kind DESC, c.name
+  `, [month]);
+  if (!rows.length) {
+    showStatus("Add budget lines before saving a reset budget.", true);
+    return;
+  }
+  setSetting(BUDGET_TEMPLATE_SETTING_KEY, JSON.stringify({
+    saved_from_month: month,
+    saved_at: new Date().toISOString(),
+    rows: rows,
+  }));
+  await saveAfterChange("Saved " + rows.length + " budget line(s) as the reset budget.");
+}
+
+async function resetBudgetFromSaved() {
+  if (!confirm("Reset this month from the saved budget? Existing budget lines for this month will be replaced, and carry-forward balances from last month will be included.")) {
     return;
   }
   const month = state.month;
-  const rows = all("SELECT id, monthly_limit FROM categories WHERE monthly_limit > 0");
-  rows.forEach(function (category) {
-    run(
-      `INSERT INTO budgets(month, category_id, planned, carry_forward)
-       VALUES (?, ?, ?, 0)
-       ON CONFLICT(month, category_id)
-       DO UPDATE SET planned = excluded.planned, updated_at = CURRENT_TIMESTAMP`,
-      [month, Number(category.id), Number(category.monthly_limit || 0)],
-    );
-  });
+  const result = applyBudgetTemplate(month);
   state.month = month;
-  syncDebtBudgetIfNeeded(month);
   const summary = zeroBudgetSummary(month);
-  await saveAfterChange("Reset " + rows.length + " budget line(s) from defaults. Left to allocate: " + money(summary.left) + ".");
+  await saveAfterChange("Reset " + result.templateCount + " budget line(s). Carry-forward categories included: " + result.carryCount + ". Left to allocate: " + money(summary.left) + ".");
+}
+
+async function resetBudgetFromDefaults() {
+  return resetBudgetFromSaved();
+}
+
+async function autoResetCurrentMonthBudget() {
+  const month = currentMonth();
+  if (getSetting(LAST_AUTO_BUDGET_RESET_MONTH_KEY) === month) {
+    return { changed: false };
+  }
+  if (Number(scalar("SELECT COUNT(*) count FROM budgets WHERE month = ?", [month], "count")) > 0) {
+    return { changed: false };
+  }
+  if (!budgetTemplateRows().length) {
+    return { changed: false };
+  }
+  const result = applyBudgetTemplate(month);
+  setSetting(LAST_AUTO_BUDGET_RESET_MONTH_KEY, month);
+  state.month = month;
+  return {
+    changed: true,
+    templateCount: result.templateCount,
+    carryCount: result.carryCount,
+  };
+}
+
+async function ensureMonthlyBudgetResetCurrent(autoSave) {
+  if (!state.db || state.dirty) {
+    return { changed: false };
+  }
+  const result = await autoResetCurrentMonthBudget();
+  if (result.changed && autoSave) {
+    renderAll();
+    await saveDatabase();
+    showStatus("New month budget reset from saved budget. Carry-forward categories included: " + result.carryCount + ".");
+    clearStatusSoon();
+  }
+  return result;
 }
 
 async function saveDebt(event) {
@@ -3229,12 +3400,14 @@ function bindEvents() {
   });
   window.addEventListener("focus", function () {
     checkForRemoteUpdates(true)
+      .then(function () { return ensureMonthlyBudgetResetCurrent(true); })
       .then(function () { return ensureRecurringTransactionsCurrent(true); })
       .catch(function (error) { showStatus(error.message, true); });
   });
   document.addEventListener("visibilitychange", function () {
     if (!document.hidden) {
       checkForRemoteUpdates(true)
+        .then(function () { return ensureMonthlyBudgetResetCurrent(true); })
         .then(function () { return ensureRecurringTransactionsCurrent(true); })
         .catch(function (error) { showStatus(error.message, true); });
     }
@@ -3374,6 +3547,9 @@ function bindEvents() {
     if (state.editingBudgetId && confirm("Delete this budget line?")) {
       deleteById("budgets", state.editingBudgetId, "Budget deleted.").catch(function (error) { showStatus(error.message, true); });
     }
+  });
+  els.saveBudgetTemplateButton.addEventListener("click", function () {
+    saveBudgetTemplate().catch(function (error) { showStatus(error.message, true); });
   });
   els.resetBudgetDefaultsButton.addEventListener("click", function () {
     resetBudgetFromDefaults().catch(function (error) { showStatus(error.message, true); });

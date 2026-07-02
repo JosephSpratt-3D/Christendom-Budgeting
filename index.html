@@ -231,7 +231,8 @@
             <button id="budgetSubmitButton" class="primary" type="submit">Save Budget Line</button>
             <button id="cancelBudgetEditButton" class="secondary hidden" type="button">Cancel Edit</button>
             <button id="deleteBudgetEditButton" class="danger hidden" type="button">Delete Budget Line</button>
-            <button id="resetBudgetDefaultsButton" class="secondary" type="button">Reset Month From Defaults</button>
+            <button id="saveBudgetTemplateButton" class="secondary" type="button">Save Month As Reset Budget</button>
+            <button id="resetBudgetDefaultsButton" class="secondary" type="button">Reset Month From Saved Budget</button>
           </form>
           <div id="budgetsList" class="list"></div>
         </section>
@@ -288,7 +289,7 @@
               <li><strong>Transactions</strong>: filter activity by month, type, account, category, debt, amount, or search text, and import or export CSV files.</li>
               <li><strong>Recurring</strong>: schedule repeating income, expenses, or transfers. Due recurring items are created automatically when the budget opens, wakes, or sync checks run.</li>
               <li><strong>Accounts</strong>: track bank accounts, cash, savings, and credit cards. Credit card balances show red and payments reduce the amount owed.</li>
-              <li><strong>Budgets</strong>: add expected income and expense allocations for the selected month. Reset from defaults copies category default amounts into the month.</li>
+              <li><strong>Budgets</strong>: add expected income and expense allocations for the selected month. Save a month as the reset budget, then reset future months from it. Carry-forward allocations bring remaining balances into the next month.</li>
               <li><strong>Debts</strong>: track debt balances, payments, and payoff estimates. Debt payments can be linked to transactions and added to the monthly budget automatically.</li>
               <li><strong>Reports</strong>: review cash flow, budget performance, categories, income sources, account balances, and debt payoff.</li>
               <li><strong>Sync</strong>: saves your browser SQLite budget file to your private Supabase Storage file for the logged-in account.</li>
@@ -314,6 +315,6 @@
     </main>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
-    <script src="app.js?v=20260702-1"></script>
+    <script src="app.js?v=20260702-2"></script>
   </body>
 </html>
