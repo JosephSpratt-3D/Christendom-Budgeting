@@ -88,7 +88,7 @@ The app saves with Storage `upsert`, so it needs `select`, `insert`, and `update
 1. Open the app.
 2. Sign up or log in with email and password.
 3. Tap `Open Budget`.
-4. Add accounts, categories, transactions, budgets, and debts.
+4. Add accounts, transactions, budgets, categories, and debts.
 5. Use `Sync` to write the current `budget.sqlite3` file to Supabase Storage.
 
 Most changes save immediately after the action completes. Before a database is open, the signed-in panel has `Open Budget`. After the database is open, the top bar and Settings tab have manual `Sync` controls.
@@ -192,8 +192,7 @@ When a new month has no budget lines yet, the app automatically creates it from 
 - `Transactions`: filter by month, search transactions, edit rows, delete rows, and import or export CSV files.
 - `Recurring`: schedule repeating income or expenses. Due recurring items are created automatically when the budget opens, when the app wakes, and during sync checks.
 - `Accounts`: track bank accounts, cash, savings, and credit cards. Credit card balances show red, charges increase the amount owed, and payments reduce the amount owed.
-- `Categories`: create income and expense categories and set default monthly budget amounts.
-- `Budgets`: add expected income and expense allocations for the selected month. Save a month as the reset budget, then reset future months from it. Carry-forward categories bring remaining balances into the next month.
+- `Budgets`: add expected income and expense allocations for the selected month. Use `Edit Categories` to create income and expense categories and set default monthly budget amounts. Save a month as the reset budget, then reset future months from it. Carry-forward categories bring remaining balances into the next month.
 - `Debts`: track balances, rates, payments, and payoff estimates. Linked debt transactions reduce the tracked debt balance.
 - `Reports`: review cash flow, budget performance, categories, income sources, account balances, and debt payoff.
 - `Settings`: sync manually, reorder tabs, review the in-app guide, log out, or clear local app state.

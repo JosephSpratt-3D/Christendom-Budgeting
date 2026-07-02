@@ -13,7 +13,6 @@ const DEFAULT_TABS = [
   { id: "transactions", label: "Transactions" },
   { id: "recurring", label: "Recurring" },
   { id: "accounts", label: "Accounts" },
-  { id: "categories", label: "Categories" },
   { id: "budgets", label: "Budgets" },
   { id: "debts", label: "Debts" },
   { id: "reports", label: "Reports" },
@@ -154,6 +153,7 @@ const els = {
   cancelCategoryEditButton: document.getElementById("cancelCategoryEditButton"),
   deleteCategoryEditButton: document.getElementById("deleteCategoryEditButton"),
   categoriesList: document.getElementById("categoriesList"),
+  openCategoriesButton: document.getElementById("openCategoriesButton"),
   budgetMonthInput: document.getElementById("budgetMonthInput"),
   budgetForm: document.getElementById("budgetForm"),
   budgetKind: document.getElementById("budgetKind"),
@@ -199,6 +199,8 @@ const els = {
   editModal: document.getElementById("editModal"),
   editModalTitle: document.getElementById("editModalTitle"),
   editModalBody: document.getElementById("editModalBody"),
+  categoryModal: document.getElementById("categoryModal"),
+  closeCategoryModalButton: document.getElementById("closeCategoryModalButton"),
 };
 
 function currentMonth() {
@@ -424,6 +426,20 @@ function closeEditModal(returnOnly) {
   }
 }
 
+function openCategoryModal() {
+  clearCategoryEditMode(true);
+  renderCategories();
+  els.categoryModal.classList.remove("hidden");
+  window.setTimeout(function () {
+    els.categoryName.focus();
+  }, 50);
+}
+
+function closeCategoryModal() {
+  clearCategoryEditMode(true);
+  els.categoryModal.classList.add("hidden");
+}
+
 function supabaseConfigured() {
   return SUPABASE_URL.indexOf("YOUR_PROJECT_REF") === -1 && SUPABASE_ANON_KEY.indexOf("YOUR_SUPABASE") === -1;
 }
@@ -615,6 +631,7 @@ async function cancelPasswordReset() {
 
 async function signOut() {
   closeEditModal(false);
+  closeCategoryModal();
   if (state.supabase) {
     const result = await state.supabase.auth.signOut();
     if (result.error) {
@@ -637,6 +654,7 @@ async function signOut() {
 
 function clearLocalSessionState() {
   closeEditModal(false);
+  closeCategoryModal();
   state.session = null;
   state.user = null;
   state.db = null;
@@ -2855,7 +2873,7 @@ async function saveCategory(event) {
         "UPDATE categories SET name = ?, kind = ?, monthly_limit = ? WHERE id = ?",
         [name, els.categoryKind.value, numberValue(els.categoryLimit), state.editingCategoryId],
       );
-      clearCategoryEditMode();
+      clearCategoryEditMode(true);
       await saveAfterChange("Category updated.");
     } else {
       run("INSERT INTO categories(name, kind, monthly_limit) VALUES (?, ?, ?)", [name, els.categoryKind.value, numberValue(els.categoryLimit)]);
@@ -2880,20 +2898,22 @@ function editCategory(id) {
   els.categorySubmitButton.textContent = "Update Category";
   els.cancelCategoryEditButton.classList.remove("hidden");
   els.deleteCategoryEditButton.classList.remove("hidden");
-  openEditModal("Edit Category", els.categoryForm);
+  els.categoryModal.classList.remove("hidden");
   window.setTimeout(function () {
     els.categoryName.focus();
   }, 50);
 }
 
-function clearCategoryEditMode() {
+function clearCategoryEditMode(keepCategoryModalOpen) {
   state.editingCategoryId = null;
   els.categoryForm.reset();
   els.categoryKind.value = "expense";
   els.categorySubmitButton.textContent = "Add Category";
   els.cancelCategoryEditButton.classList.add("hidden");
   els.deleteCategoryEditButton.classList.add("hidden");
-  closeEditModal(true);
+  if (!keepCategoryModalOpen) {
+    closeEditModal(true);
+  }
 }
 
 function editExpectedIncome(id) {
@@ -3379,13 +3399,21 @@ function bindEvents() {
       closeEditModal(false);
     }
   });
+  els.categoryModal.addEventListener("click", function (event) {
+    if (event.target === els.categoryModal) {
+      closeCategoryModal();
+    }
+  });
   document.addEventListener("keydown", function (event) {
     if (event.key === "Escape" && !els.editModal.classList.contains("hidden")) {
       closeEditModal(false);
+    } else if (event.key === "Escape" && !els.categoryModal.classList.contains("hidden")) {
+      closeCategoryModal();
     }
   });
   els.resetButton.addEventListener("click", function () {
     closeEditModal(false);
+    closeCategoryModal();
     state.db = null;
     state.remoteVersion = null;
     state.remoteExists = false;
@@ -3461,6 +3489,8 @@ function bindEvents() {
     renderSelectors();
     updateBudgetFormUi();
   });
+  els.openCategoriesButton.addEventListener("click", openCategoryModal);
+  els.closeCategoryModalButton.addEventListener("click", closeCategoryModal);
   els.transactionSearch.addEventListener("input", renderTransactions);
   [
     els.transactionTypeFilter,
@@ -3533,10 +3563,14 @@ function bindEvents() {
   els.categoryForm.addEventListener("submit", function (event) {
     saveCategory(event).catch(function (error) { showStatus(error.message, true); });
   });
-  els.cancelCategoryEditButton.addEventListener("click", clearCategoryEditMode);
+  els.cancelCategoryEditButton.addEventListener("click", function () {
+    clearCategoryEditMode(true);
+  });
   els.deleteCategoryEditButton.addEventListener("click", function () {
     if (state.editingCategoryId && confirm("Delete this category? Existing transactions become uncategorized.")) {
-      deleteById("categories", state.editingCategoryId, "Category deleted.").catch(function (error) { showStatus(error.message, true); });
+      const id = state.editingCategoryId;
+      clearCategoryEditMode(true);
+      deleteById("categories", id, "Category deleted.").catch(function (error) { showStatus(error.message, true); });
     }
   });
   els.budgetForm.addEventListener("submit", function (event) {
@@ -3595,7 +3629,7 @@ function bindEvents() {
       editCategory(id);
     } else if (action === "delete-category" && confirm("Delete this category? Existing transactions become uncategorized.")) {
       if (state.editingCategoryId === Number(id)) {
-        clearCategoryEditMode();
+        clearCategoryEditMode(true);
       }
       deleteById("categories", id, "Category deleted.").catch(function (error) { showStatus(error.message, true); });
     } else if (action === "edit-expected-income") {

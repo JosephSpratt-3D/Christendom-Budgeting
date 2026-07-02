@@ -71,7 +71,6 @@
         <button data-tab="transactions" type="button">Transactions</button>
         <button data-tab="recurring" type="button">Recurring</button>
         <button data-tab="accounts" type="button">Accounts</button>
-        <button data-tab="categories" type="button">Categories</button>
         <button data-tab="budgets" type="button">Budgets</button>
         <button data-tab="debts" type="button">Debts</button>
         <button data-tab="reports" type="button">Reports</button>
@@ -196,24 +195,12 @@
         </section>
       </section>
 
-      <section id="categoriesTab" class="tab-page">
-        <section class="panel">
-          <h2>Categories</h2>
-          <form id="categoryForm" class="form-grid">
-            <label>Name<input id="categoryName" required></label>
-            <label>Kind<select id="categoryKind"><option value="expense">Expense</option><option value="income">Income</option></select></label>
-            <label>Default Budget<input id="categoryLimit" inputmode="decimal" placeholder="0.00"></label>
-            <button id="categorySubmitButton" class="primary" type="submit">Add Category</button>
-            <button id="cancelCategoryEditButton" class="secondary hidden" type="button">Cancel Edit</button>
-            <button id="deleteCategoryEditButton" class="danger hidden" type="button">Delete Category</button>
-          </form>
-          <div id="categoriesList" class="list"></div>
-        </section>
-      </section>
-
       <section id="budgetsTab" class="tab-page">
         <section class="panel">
-          <h2>Zero-Based Budget</h2>
+          <div class="panel-head">
+            <h2>Zero-Based Budget</h2>
+            <button id="openCategoriesButton" class="secondary small" type="button">Edit Categories</button>
+          </div>
           <div class="month-row">
             <label>Month<input id="budgetMonthInput" type="month"></label>
           </div>
@@ -289,7 +276,7 @@
               <li><strong>Transactions</strong>: filter activity by month, type, account, category, debt, amount, or search text, and import or export CSV files.</li>
               <li><strong>Recurring</strong>: schedule repeating income, expenses, or transfers. Due recurring items are created automatically when the budget opens, wakes, or sync checks run.</li>
               <li><strong>Accounts</strong>: track bank accounts, cash, savings, and credit cards. Credit card balances show red and payments reduce the amount owed.</li>
-              <li><strong>Budgets</strong>: add expected income and expense allocations for the selected month. Save a month as the reset budget, then reset future months from it. Carry-forward allocations bring remaining balances into the next month.</li>
+              <li><strong>Budgets</strong>: add expected income and expense allocations, edit categories, save a month as the reset budget, and reset future months from it. Carry-forward allocations bring remaining balances into the next month.</li>
               <li><strong>Debts</strong>: track debt balances, payments, and payoff estimates. Debt payments can be linked to transactions and added to the monthly budget automatically.</li>
               <li><strong>Reports</strong>: review cash flow, budget performance, categories, income sources, account balances, and debt payoff.</li>
               <li><strong>Sync</strong>: saves your browser SQLite budget file to your private Supabase Storage file for the logged-in account.</li>
@@ -312,9 +299,27 @@
           <div id="editModalBody"></div>
         </div>
       </section>
+
+      <section id="categoryModal" class="modal hidden" aria-modal="true" role="dialog" aria-labelledby="categoryModalTitle">
+        <div class="modal-panel category-modal-panel">
+          <div class="modal-head">
+            <h2 id="categoryModalTitle">Categories</h2>
+            <button id="closeCategoryModalButton" class="secondary small" type="button">Close</button>
+          </div>
+          <form id="categoryForm" class="form-grid">
+            <label>Name<input id="categoryName" required></label>
+            <label>Kind<select id="categoryKind"><option value="expense">Expense</option><option value="income">Income</option></select></label>
+            <label>Default Budget<input id="categoryLimit" inputmode="decimal" placeholder="0.00"></label>
+            <button id="categorySubmitButton" class="primary" type="submit">Add Category</button>
+            <button id="cancelCategoryEditButton" class="secondary hidden" type="button">Cancel Edit</button>
+            <button id="deleteCategoryEditButton" class="danger hidden" type="button">Delete Category</button>
+          </form>
+          <div id="categoriesList" class="list"></div>
+        </div>
+      </section>
     </main>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
-    <script src="app.js?v=20260702-2"></script>
+    <script src="app.js?v=20260702-3"></script>
   </body>
 </html>
