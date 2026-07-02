@@ -119,7 +119,10 @@ const els = {
   recType: document.getElementById("recType"),
   recNextDate: document.getElementById("recNextDate"),
   recFrequency: document.getElementById("recFrequency"),
+  recAccountLabel: document.getElementById("recAccountLabel"),
   recAccount: document.getElementById("recAccount"),
+  recTransferToField: document.getElementById("recTransferToField"),
+  recTransferTo: document.getElementById("recTransferTo"),
   recCategory: document.getElementById("recCategory"),
   recDebt: document.getElementById("recDebt"),
   recVendor: document.getElementById("recVendor"),
@@ -820,9 +823,10 @@ function migrateDatabase() {
     CREATE TABLE IF NOT EXISTS recurring_transactions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      transfer_to_account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
       category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
       debt_id INTEGER REFERENCES debts(id) ON DELETE SET NULL,
-      type TEXT NOT NULL CHECK (type IN ('income','expense')),
+      type TEXT NOT NULL CHECK (type IN ('income','expense','transfer')),
       amount REAL NOT NULL CHECK (amount >= 0),
       vendor TEXT NOT NULL DEFAULT '',
       notes TEXT NOT NULL DEFAULT '',
@@ -916,8 +920,49 @@ function migrateDatabase() {
   if (recurringColumns.indexOf("debt_id") === -1) {
     state.db.run("ALTER TABLE recurring_transactions ADD COLUMN debt_id INTEGER REFERENCES debts(id) ON DELETE SET NULL");
   }
+  const recurringColumnsAfterDebt = all("PRAGMA table_info(recurring_transactions)").map(function (row) {
+    return row.name;
+  });
+  if (recurringColumnsAfterDebt.indexOf("transfer_to_account_id") === -1) {
+    state.db.run("ALTER TABLE recurring_transactions ADD COLUMN transfer_to_account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE");
+  }
+  const recurringTable = one("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'recurring_transactions'");
+  if (recurringTable && String(recurringTable.sql || "").indexOf("'transfer'") === -1) {
+    state.db.run("PRAGMA foreign_keys = OFF");
+    state.db.run(`
+      CREATE TABLE recurring_transactions_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        transfer_to_account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
+        category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+        debt_id INTEGER REFERENCES debts(id) ON DELETE SET NULL,
+        type TEXT NOT NULL CHECK (type IN ('income','expense','transfer')),
+        amount REAL NOT NULL CHECK (amount >= 0),
+        vendor TEXT NOT NULL DEFAULT '',
+        notes TEXT NOT NULL DEFAULT '',
+        frequency TEXT NOT NULL DEFAULT 'monthly',
+        next_date TEXT NOT NULL,
+        active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    state.db.run(`
+      INSERT INTO recurring_transactions_new(
+        id, account_id, transfer_to_account_id, category_id, debt_id, type, amount,
+        vendor, notes, frequency, next_date, active, created_at
+      )
+      SELECT
+        id, account_id, transfer_to_account_id, category_id, debt_id, type, amount,
+        vendor, notes, frequency, next_date, active, created_at
+      FROM recurring_transactions
+    `);
+    state.db.run("DROP TABLE recurring_transactions");
+    state.db.run("ALTER TABLE recurring_transactions_new RENAME TO recurring_transactions");
+    state.db.run("PRAGMA foreign_keys = ON");
+  }
   state.db.run("CREATE INDEX IF NOT EXISTS idx_recurring_next_date ON recurring_transactions(next_date)");
   state.db.run("CREATE INDEX IF NOT EXISTS idx_recurring_debt ON recurring_transactions(debt_id)");
+  state.db.run("CREATE INDEX IF NOT EXISTS idx_recurring_transfer_to ON recurring_transactions(transfer_to_account_id)");
   const debtColumns = all("PRAGMA table_info(debts)").map(function (row) {
     return row.name;
   });
@@ -1299,11 +1344,13 @@ function renderSelectors() {
   const oldFilterCategory = els.transactionCategoryFilter.value;
   const oldFilterDebt = els.transactionDebtFilter.value;
   const oldRecurringAccount = els.recAccount.value;
+  const oldRecurringTransferTo = els.recTransferTo.value;
   const oldRecurringDebt = els.recDebt.value;
   const oldBudgetCategory = els.budgetCategory.value;
   clearNode(els.txAccount);
   clearNode(els.txTransferTo);
   clearNode(els.recAccount);
+  clearNode(els.recTransferTo);
   clearNode(els.txDebt);
   clearNode(els.recDebt);
   clearNode(els.transactionAccountFilter);
@@ -1341,11 +1388,16 @@ function renderSelectors() {
     recurringOption.value = account.id;
     recurringOption.textContent = label;
     els.recAccount.appendChild(recurringOption);
+    const recurringTransferToOption = document.createElement("option");
+    recurringTransferToOption.value = account.id;
+    recurringTransferToOption.textContent = label;
+    els.recTransferTo.appendChild(recurringTransferToOption);
     addOption(els.transactionAccountFilter, String(account.id), label);
   });
   els.txAccount.value = oldAccount;
   els.txTransferTo.value = oldTransferTo || (accounts[1] ? String(accounts[1].id) : (accounts[0] ? String(accounts[0].id) : ""));
   els.recAccount.value = oldRecurringAccount || (accounts[0] ? String(accounts[0].id) : "");
+  els.recTransferTo.value = oldRecurringTransferTo || (accounts[1] ? String(accounts[1].id) : (accounts[0] ? String(accounts[0].id) : ""));
   debts.forEach(function (debt) {
     const option = document.createElement("option");
     option.value = debt.id;
@@ -1377,6 +1429,7 @@ function renderSelectors() {
     els.vendorList.appendChild(option);
   });
   updateTransactionTypeUi();
+  updateRecurringTypeUi();
   updateBudgetFormUi();
 }
 
@@ -1420,6 +1473,28 @@ function updateTransactionTypeUi() {
   } else {
     els.transactionSubmit.textContent = isTransfer ? "Save Transfer" : "Save Transaction";
   }
+}
+
+function updateRecurringTypeUi() {
+  const isTransfer = els.recType.value === "transfer";
+  els.recAccountLabel.textContent = isTransfer ? "From Account" : "Account";
+  els.recTransferToField.classList.toggle("hidden", !isTransfer);
+  els.recCategory.parentElement.classList.toggle("hidden", isTransfer);
+  els.recDebt.parentElement.classList.toggle("hidden", isTransfer);
+  els.recVendor.parentElement.classList.toggle("hidden", isTransfer);
+  els.recTransferTo.disabled = !isTransfer;
+  els.recTransferTo.required = isTransfer;
+  els.recCategory.disabled = isTransfer;
+  els.recDebt.disabled = isTransfer;
+  els.recVendor.disabled = isTransfer;
+  if (isTransfer) {
+    els.recCategory.value = "";
+    els.recDebt.value = "";
+    els.recVendor.value = "";
+  }
+  els.recurringSubmitButton.textContent = state.editingRecurringId
+    ? (isTransfer ? "Update Recurring Transfer" : "Update Recurring")
+    : (isTransfer ? "Add Recurring Transfer" : "Add Recurring");
 }
 
 function vendorOptions() {
@@ -1554,9 +1629,45 @@ function nextRecurringDate(dateText, frequency) {
 
 function createTransactionFromRecurring(rule, dueDate) {
   const externalId = "recurring-" + rule.id + "-" + dueDate;
-  const exists = one("SELECT id FROM transactions WHERE source = 'recurring' AND external_id = ?", [externalId]);
+  const isTransfer = rule.type === "transfer";
+  const exists = one(
+    isTransfer
+      ? "SELECT id FROM transactions WHERE source = 'transfer' AND external_id = ?"
+      : "SELECT id FROM transactions WHERE source = 'recurring' AND external_id = ?",
+    [isTransfer ? externalId + "-out" : externalId],
+  );
   if (exists) {
     return false;
+  }
+  if (isTransfer) {
+    if (!rule.account_id || !rule.transfer_to_account_id || Number(rule.account_id) === Number(rule.transfer_to_account_id)) {
+      return false;
+    }
+    run(
+      `INSERT INTO transactions(account_id, category_id, debt_id, date, type, amount, vendor, notes, recurring_transaction_id, source, external_id)
+       VALUES (?, NULL, NULL, ?, 'expense', ?, 'Transfer', ?, ?, 'transfer', ?)`,
+      [
+        Number(rule.account_id),
+        dueDate,
+        Number(rule.amount || 0),
+        rule.notes || "",
+        Number(rule.id),
+        externalId + "-out",
+      ],
+    );
+    run(
+      `INSERT INTO transactions(account_id, category_id, debt_id, date, type, amount, vendor, notes, recurring_transaction_id, source, external_id)
+       VALUES (?, NULL, NULL, ?, 'income', ?, 'Transfer', ?, ?, 'transfer', ?)`,
+      [
+        Number(rule.transfer_to_account_id),
+        dueDate,
+        Number(rule.amount || 0),
+        rule.notes || "",
+        Number(rule.id),
+        externalId + "-in",
+      ],
+    );
+    return true;
   }
   run(
     `INSERT INTO transactions(account_id, category_id, debt_id, date, type, amount, vendor, notes, recurring_transaction_id, source, external_id)
@@ -1802,9 +1913,10 @@ function renderTransactions() {
 function renderRecurring() {
   clearNode(els.recurringList);
   const rows = all(`
-    SELECT r.*, a.name account, COALESCE(c.name, '') category, COALESCE(d.name, '') debt
+    SELECT r.*, a.name account, COALESCE(ta.name, '') transfer_to_account, COALESCE(c.name, '') category, COALESCE(d.name, '') debt
     FROM recurring_transactions r
     JOIN accounts a ON a.id = r.account_id
+    LEFT JOIN accounts ta ON ta.id = r.transfer_to_account_id
     LEFT JOIN categories c ON c.id = r.category_id
     LEFT JOIN debts d ON d.id = r.debt_id
     ORDER BY r.active DESC, r.next_date, r.vendor
@@ -1813,12 +1925,13 @@ function renderRecurring() {
     els.recurringList.textContent = "No recurring transactions yet.";
   }
   rows.forEach(function (rule) {
-    const title = rule.vendor || rule.notes || rule.category || "Recurring transaction";
+    const title = rule.type === "transfer" ? (rule.notes || "Recurring transfer") : (rule.vendor || rule.notes || rule.category || "Recurring transaction");
     const detail = [
       rule.active ? "Active" : "Paused",
       "Next " + rule.next_date,
       displayText(rule.frequency),
-      rule.account,
+      rule.type === "transfer" ? "From " + rule.account : rule.account,
+      rule.type === "transfer" && rule.transfer_to_account ? "To " + rule.transfer_to_account : "",
       rule.category,
       rule.debt ? "Debt: " + rule.debt : "",
       displayText(rule.type),
@@ -2467,11 +2580,17 @@ async function deleteTransaction(id) {
 async function saveRecurring(event) {
   event.preventDefault();
   const accountId = Number(els.recAccount.value || 0);
-  const debtId = els.recDebt.value ? Number(els.recDebt.value) : null;
-  const categoryId = els.recCategory.value ? Number(els.recCategory.value) : (debtId ? debtCategoryId() : null);
+  const isTransfer = els.recType.value === "transfer";
+  const transferToAccountId = isTransfer ? Number(els.recTransferTo.value || 0) : null;
+  const debtId = !isTransfer && els.recDebt.value ? Number(els.recDebt.value) : null;
+  const categoryId = !isTransfer && els.recCategory.value ? Number(els.recCategory.value) : (debtId ? debtCategoryId() : null);
   const amount = Math.abs(numberValue(els.recAmount));
   if (!accountId || amount <= 0) {
     showStatus("Choose an account and enter an amount.", true);
+    return;
+  }
+  if (isTransfer && (!transferToAccountId || transferToAccountId === accountId)) {
+    showStatus("Choose two different accounts for the recurring transfer.", true);
     return;
   }
   if (debtId && els.recType.value !== "expense") {
@@ -2480,11 +2599,12 @@ async function saveRecurring(event) {
   }
   const values = [
     accountId,
+    transferToAccountId,
     categoryId,
     debtId,
     els.recType.value,
     amount,
-    els.recVendor.value.trim(),
+    isTransfer ? "" : els.recVendor.value.trim(),
     els.recNotes.value.trim(),
     els.recFrequency.value,
     els.recNextDate.value || today(),
@@ -2493,7 +2613,7 @@ async function saveRecurring(event) {
   if (state.editingRecurringId) {
     run(
       `UPDATE recurring_transactions
-       SET account_id = ?, category_id = ?, debt_id = ?, type = ?, amount = ?, vendor = ?, notes = ?, frequency = ?, next_date = ?, active = ?
+       SET account_id = ?, transfer_to_account_id = ?, category_id = ?, debt_id = ?, type = ?, amount = ?, vendor = ?, notes = ?, frequency = ?, next_date = ?, active = ?
        WHERE id = ?`,
       values.concat([state.editingRecurringId]),
     );
@@ -2507,14 +2627,15 @@ async function saveRecurring(event) {
     return;
   }
   run(
-    `INSERT INTO recurring_transactions(account_id, category_id, debt_id, type, amount, vendor, notes, frequency, next_date, active)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO recurring_transactions(account_id, transfer_to_account_id, category_id, debt_id, type, amount, vendor, notes, frequency, next_date, active)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     values,
   );
   els.recurringForm.reset();
   els.recFrequency.value = "monthly";
   els.recNextDate.value = today();
   els.recActive.checked = true;
+  renderSelectors();
   const result = processDueRecurringTransactions();
   await saveAfterChange(
     result.created > 0
@@ -2533,6 +2654,7 @@ function editRecurring(id) {
   els.recType.value = rule.type || "expense";
   renderSelectors();
   els.recAccount.value = rule.account_id;
+  els.recTransferTo.value = rule.transfer_to_account_id || "";
   els.recCategory.value = rule.category_id || "";
   els.recDebt.value = rule.debt_id || "";
   els.recFrequency.value = rule.frequency || "monthly";
@@ -2541,6 +2663,7 @@ function editRecurring(id) {
   els.recNotes.value = rule.notes || "";
   els.recActive.checked = Number(rule.active || 0) === 1;
   els.recurringSubmitButton.textContent = "Update Recurring";
+  updateRecurringTypeUi();
   els.cancelRecurringEditButton.classList.remove("hidden");
   els.deleteRecurringEditButton.classList.remove("hidden");
   openEditModal("Edit Recurring Transaction", els.recurringForm);
@@ -2556,6 +2679,7 @@ function clearRecurringEditMode() {
   els.recNextDate.value = today();
   els.recActive.checked = true;
   els.recurringSubmitButton.textContent = "Add Recurring";
+  renderSelectors();
   els.cancelRecurringEditButton.classList.add("hidden");
   els.deleteRecurringEditButton.classList.add("hidden");
   closeEditModal(true);
@@ -3151,6 +3275,7 @@ function bindEvents() {
       els.recDebt.value = "";
     }
     renderSelectors();
+    updateRecurringTypeUi();
   });
   els.recDebt.addEventListener("change", function () {
     if (els.recDebt.value) {

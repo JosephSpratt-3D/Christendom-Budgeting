@@ -162,10 +162,11 @@
           </div>
           <form id="recurringForm" class="form-grid">
             <label>Amount<input id="recAmount" inputmode="decimal" placeholder="0.00" required></label>
-            <label>Type<select id="recType"><option value="expense">Expense</option><option value="income">Income</option></select></label>
+            <label>Type<select id="recType"><option value="expense">Expense</option><option value="income">Income</option><option value="transfer">Transfer</option></select></label>
             <label>Next Date<input id="recNextDate" type="date" required></label>
             <label>Frequency<select id="recFrequency"><option value="weekly">Weekly</option><option value="biweekly">Biweekly</option><option value="monthly" selected>Monthly</option><option value="yearly">Yearly</option></select></label>
-            <label>Account<select id="recAccount" required></select></label>
+            <label><span id="recAccountLabel">Account</span><select id="recAccount" required></select></label>
+            <label id="recTransferToField" class="hidden">To Account<select id="recTransferTo"></select></label>
             <label>Category<select id="recCategory"></select></label>
             <label>Linked Debt<select id="recDebt"></select></label>
             <label class="vendor-field">Vendor<input id="recVendor" list="vendorList" autocomplete="off" placeholder="Vendor"><div id="recVendorSuggestions" class="suggestions hidden"></div></label>
@@ -285,7 +286,7 @@
               <li><strong>Add</strong>: enter income, expenses, transfers, and budget-only transactions. Choose <strong>No Account</strong> when a transaction should affect budgets and reports without changing an account balance.</li>
               <li><strong>Dashboard</strong>: review monthly income, spending, budget remaining, net worth, account balances, and category spending.</li>
               <li><strong>Transactions</strong>: filter activity by month, type, account, category, debt, amount, or search text, and import or export CSV files.</li>
-              <li><strong>Recurring</strong>: schedule repeating income or expenses. Due recurring items are created automatically when the budget opens, wakes, or sync checks run.</li>
+              <li><strong>Recurring</strong>: schedule repeating income, expenses, or transfers. Due recurring items are created automatically when the budget opens, wakes, or sync checks run.</li>
               <li><strong>Accounts</strong>: track bank accounts, cash, savings, and credit cards. Credit card balances show red and payments reduce the amount owed.</li>
               <li><strong>Budgets</strong>: add expected income and expense allocations for the selected month. Reset from defaults copies category default amounts into the month.</li>
               <li><strong>Debts</strong>: track debt balances, payments, and payoff estimates. Debt payments can be linked to transactions and added to the monthly budget automatically.</li>
@@ -313,6 +314,6 @@
     </main>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
-    <script src="app.js?v=20260614-5"></script>
+    <script src="app.js?v=20260702-1"></script>
   </body>
 </html>
