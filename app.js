@@ -148,7 +148,6 @@ const els = {
   categoryForm: document.getElementById("categoryForm"),
   categoryName: document.getElementById("categoryName"),
   categoryKind: document.getElementById("categoryKind"),
-  categoryLimit: document.getElementById("categoryLimit"),
   categorySubmitButton: document.getElementById("categorySubmitButton"),
   cancelCategoryEditButton: document.getElementById("cancelCategoryEditButton"),
   deleteCategoryEditButton: document.getElementById("deleteCategoryEditButton"),
@@ -2041,8 +2040,8 @@ function renderCategories() {
     addRow(
       els.categoriesList,
       category.name,
-      money(category.monthly_limit),
-      "Default budget",
+      displayText(category.kind),
+      "Category",
       "",
       null,
       { label: "Edit " + category.name, action: "edit-category", id: category.id },
@@ -2058,8 +2057,8 @@ function renderCategories() {
     addRow(
       els.categoriesList,
       category.name,
-      money(category.monthly_limit),
-      "Default budget",
+      displayText(category.kind),
+      "Category",
       "",
       null,
       { label: "Edit " + category.name, action: "edit-category", id: category.id },
@@ -2870,13 +2869,13 @@ async function saveCategory(event) {
   try {
     if (state.editingCategoryId) {
       run(
-        "UPDATE categories SET name = ?, kind = ?, monthly_limit = ? WHERE id = ?",
-        [name, els.categoryKind.value, numberValue(els.categoryLimit), state.editingCategoryId],
+        "UPDATE categories SET name = ?, kind = ?, monthly_limit = 0 WHERE id = ?",
+        [name, els.categoryKind.value, state.editingCategoryId],
       );
       clearCategoryEditMode(true);
       await saveAfterChange("Category updated.");
     } else {
-      run("INSERT INTO categories(name, kind, monthly_limit) VALUES (?, ?, ?)", [name, els.categoryKind.value, numberValue(els.categoryLimit)]);
+      run("INSERT INTO categories(name, kind, monthly_limit) VALUES (?, ?, 0)", [name, els.categoryKind.value]);
       els.categoryForm.reset();
       els.categoryKind.value = "expense";
       await saveAfterChange("Category added.");
@@ -2894,7 +2893,6 @@ function editCategory(id) {
   state.editingCategoryId = Number(id);
   els.categoryName.value = category.name || "";
   els.categoryKind.value = category.kind || "expense";
-  els.categoryLimit.value = category.monthly_limit || "";
   els.categorySubmitButton.textContent = "Update Category";
   els.cancelCategoryEditButton.classList.remove("hidden");
   els.deleteCategoryEditButton.classList.remove("hidden");
@@ -3032,7 +3030,7 @@ function budgetTemplateRows() {
       return [];
     }
   }
-  return all("SELECT id category_id, monthly_limit planned, 0 carry_forward FROM categories WHERE monthly_limit > 0");
+  return [];
 }
 
 function carryForwardAdjustments(targetMonth) {
@@ -3061,7 +3059,7 @@ function carryForwardAdjustments(targetMonth) {
 function applyBudgetTemplate(month) {
   const templateRows = budgetTemplateRows();
   if (!templateRows.length) {
-    throw new Error("Save a reset budget first, or set category default budgets before resetting.");
+    throw new Error("Save a reset budget before resetting a month.");
   }
   const carryAdjustments = carryForwardAdjustments(month);
   const merged = {};

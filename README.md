@@ -161,7 +161,7 @@ Debt payments are added to the monthly budget automatically. The app sets the `D
 
 Budget rows show what has been spent so far, plus the planned and remaining amounts. Rows are green when spending is at or under the planned amount and red when spending is over plan. The dashboard category spending list shows the same planned and remaining details.
 
-Use `Save Month As Reset Budget` to save the selected month's budget as the reusable reset budget. `Reset Month From Saved Budget` replaces the selected month with that saved budget and then applies carry-forward amounts from the previous month for categories that had `Carry Forward` selected. If no saved reset budget exists yet, the app falls back to category default budget amounts.
+Use `Save Month As Reset Budget` to save the selected month's budget as the reusable reset budget. `Reset Month From Saved Budget` replaces the selected month with that saved budget and then applies carry-forward amounts from the previous month for categories that had `Carry Forward` selected.
 
 When a new month has no budget lines yet, the app automatically creates it from the saved reset budget the first time the budget opens or wakes up that month. Carry-forward categories are included in that automatic reset.
 
@@ -192,7 +192,7 @@ When a new month has no budget lines yet, the app automatically creates it from 
 - `Transactions`: filter by month, search transactions, edit rows, delete rows, and import or export CSV files.
 - `Recurring`: schedule repeating income or expenses. Due recurring items are created automatically when the budget opens, when the app wakes, and during sync checks.
 - `Accounts`: track bank accounts, cash, savings, and credit cards. Credit card balances show red, charges increase the amount owed, and payments reduce the amount owed.
-- `Budgets`: add expected income and expense allocations for the selected month. Use `Edit Categories` to create income and expense categories and set default monthly budget amounts. Save a month as the reset budget, then reset future months from it. Carry-forward categories bring remaining balances into the next month.
+- `Budgets`: add expected income and expense allocations for the selected month. Use `Edit Categories` to create income and expense categories. Save a month as the reset budget, then reset future months from it. Carry-forward categories bring remaining balances into the next month.
 - `Debts`: track balances, rates, payments, and payoff estimates. Linked debt transactions reduce the tracked debt balance.
 - `Reports`: review cash flow, budget performance, categories, income sources, account balances, and debt payoff.
 - `Settings`: sync manually, reorder tabs, review the in-app guide, log out, or clear local app state.
