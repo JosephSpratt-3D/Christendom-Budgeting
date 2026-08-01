@@ -791,6 +791,66 @@ function run(sql, params) {
   state.dirty = true;
 }
 
+function tableExists(name) {
+  return Boolean(one("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", [name]));
+}
+
+function columnExists(table, column) {
+  if (!tableExists(table)) {
+    return false;
+  }
+  return all("PRAGMA table_info(" + table + ")").some(function (row) {
+    return row.name === column;
+  });
+}
+
+function repairForeignKeyReferences() {
+  let changed = false;
+  const execRepair = function (sql) {
+    state.db.run(sql);
+    if (state.db.getRowsModified() > 0) {
+      changed = true;
+    }
+  };
+
+  if (tableExists("transactions")) {
+    if (columnExists("transactions", "account_id") && tableExists("accounts")) {
+      execRepair("UPDATE transactions SET account_id = NULL WHERE account_id IS NOT NULL AND account_id NOT IN (SELECT id FROM accounts)");
+    }
+    if (columnExists("transactions", "category_id") && tableExists("categories")) {
+      execRepair("UPDATE transactions SET category_id = NULL WHERE category_id IS NOT NULL AND category_id NOT IN (SELECT id FROM categories)");
+    }
+    if (columnExists("transactions", "debt_id") && tableExists("debts")) {
+      execRepair("UPDATE transactions SET debt_id = NULL WHERE debt_id IS NOT NULL AND debt_id NOT IN (SELECT id FROM debts)");
+    }
+  }
+
+  if (tableExists("budgets") && columnExists("budgets", "category_id") && tableExists("categories")) {
+    execRepair("DELETE FROM budgets WHERE category_id IS NULL OR category_id NOT IN (SELECT id FROM categories)");
+  }
+
+  if (tableExists("recurring_transactions")) {
+    if (columnExists("recurring_transactions", "account_id") && tableExists("accounts")) {
+      execRepair("DELETE FROM recurring_transactions WHERE account_id IS NULL OR account_id NOT IN (SELECT id FROM accounts)");
+    }
+    if (columnExists("recurring_transactions", "transfer_to_account_id") && tableExists("accounts")) {
+      execRepair("UPDATE recurring_transactions SET transfer_to_account_id = NULL WHERE transfer_to_account_id IS NOT NULL AND transfer_to_account_id NOT IN (SELECT id FROM accounts)");
+    }
+    if (columnExists("recurring_transactions", "category_id") && tableExists("categories")) {
+      execRepair("UPDATE recurring_transactions SET category_id = NULL WHERE category_id IS NOT NULL AND category_id NOT IN (SELECT id FROM categories)");
+    }
+    if (columnExists("recurring_transactions", "debt_id") && tableExists("debts")) {
+      execRepair("UPDATE recurring_transactions SET debt_id = NULL WHERE debt_id IS NOT NULL AND debt_id NOT IN (SELECT id FROM debts)");
+    }
+  }
+
+  if (tableExists("debts") && columnExists("debts", "account_id") && tableExists("accounts")) {
+    execRepair("UPDATE debts SET account_id = NULL WHERE account_id IS NOT NULL AND account_id NOT IN (SELECT id FROM accounts)");
+  }
+
+  return changed;
+}
+
 function getSetting(key) {
   const row = one("SELECT value FROM settings WHERE key = ?", [key]);
   return row ? String(row.value || "") : "";
@@ -817,7 +877,8 @@ function previousMonth(month) {
 }
 
 function migrateDatabase() {
-  state.db.run("PRAGMA foreign_keys = ON");
+  let changed = false;
+  state.db.run("PRAGMA foreign_keys = OFF");
   state.db.run(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -841,6 +902,17 @@ function migrateDatabase() {
       color TEXT NOT NULL DEFAULT '#64748b',
       is_default INTEGER NOT NULL DEFAULT 0,
       UNIQUE(name, kind)
+    );
+    CREATE TABLE IF NOT EXISTS debts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
+      name TEXT NOT NULL,
+      balance REAL NOT NULL DEFAULT 0,
+      interest_rate REAL NOT NULL DEFAULT 0,
+      minimum_payment REAL NOT NULL DEFAULT 0,
+      extra_payment REAL NOT NULL DEFAULT 0,
+      include_in_net_worth INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS transactions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -880,17 +952,6 @@ function migrateDatabase() {
       active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
-    CREATE TABLE IF NOT EXISTS debts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
-      name TEXT NOT NULL,
-      balance REAL NOT NULL DEFAULT 0,
-      interest_rate REAL NOT NULL DEFAULT 0,
-      minimum_payment REAL NOT NULL DEFAULT 0,
-      extra_payment REAL NOT NULL DEFAULT 0,
-      include_in_net_worth INTEGER NOT NULL DEFAULT 1,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -906,18 +967,21 @@ function migrateDatabase() {
   });
   if (columns.indexOf("source") === -1) {
     state.db.run("ALTER TABLE transactions ADD COLUMN source TEXT NOT NULL DEFAULT 'desktop'");
+    changed = true;
   }
   if (columns.indexOf("external_id") === -1) {
     state.db.run("ALTER TABLE transactions ADD COLUMN external_id TEXT");
+    changed = true;
   }
   if (columns.indexOf("debt_id") === -1) {
     state.db.run("ALTER TABLE transactions ADD COLUMN debt_id INTEGER REFERENCES debts(id) ON DELETE SET NULL");
+    changed = true;
   }
+  changed = repairForeignKeyReferences() || changed;
   const transactionAccountColumn = all("PRAGMA table_info(transactions)").find(function (row) {
     return row.name === "account_id";
   });
   if (transactionAccountColumn && Number(transactionAccountColumn.notnull || 0) === 1) {
-    state.db.run("PRAGMA foreign_keys = OFF");
     state.db.run(`
       CREATE TABLE transactions_new (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -942,13 +1006,17 @@ function migrateDatabase() {
         recurring_transaction_id, created_at, updated_at, source, external_id
       )
       SELECT
-        id, account_id, category_id, debt_id, date, type, amount, vendor, notes,
+        id,
+        CASE WHEN account_id IS NOT NULL AND EXISTS (SELECT 1 FROM accounts WHERE accounts.id = transactions.account_id) THEN account_id ELSE NULL END,
+        CASE WHEN category_id IS NOT NULL AND EXISTS (SELECT 1 FROM categories WHERE categories.id = transactions.category_id) THEN category_id ELSE NULL END,
+        CASE WHEN debt_id IS NOT NULL AND EXISTS (SELECT 1 FROM debts WHERE debts.id = transactions.debt_id) THEN debt_id ELSE NULL END,
+        date, type, amount, vendor, notes,
         recurring_transaction_id, created_at, updated_at, source, external_id
       FROM transactions
     `);
     state.db.run("DROP TABLE transactions");
     state.db.run("ALTER TABLE transactions_new RENAME TO transactions");
-    state.db.run("PRAGMA foreign_keys = ON");
+    changed = true;
   }
   state.db.run("CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date)");
   state.db.run("CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id)");
@@ -964,16 +1032,18 @@ function migrateDatabase() {
   });
   if (recurringColumns.indexOf("debt_id") === -1) {
     state.db.run("ALTER TABLE recurring_transactions ADD COLUMN debt_id INTEGER REFERENCES debts(id) ON DELETE SET NULL");
+    changed = true;
   }
   const recurringColumnsAfterDebt = all("PRAGMA table_info(recurring_transactions)").map(function (row) {
     return row.name;
   });
   if (recurringColumnsAfterDebt.indexOf("transfer_to_account_id") === -1) {
     state.db.run("ALTER TABLE recurring_transactions ADD COLUMN transfer_to_account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE");
+    changed = true;
   }
+  changed = repairForeignKeyReferences() || changed;
   const recurringTable = one("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'recurring_transactions'");
   if (recurringTable && String(recurringTable.sql || "").indexOf("'transfer'") === -1) {
-    state.db.run("PRAGMA foreign_keys = OFF");
     state.db.run(`
       CREATE TABLE recurring_transactions_new (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -997,13 +1067,19 @@ function migrateDatabase() {
         vendor, notes, frequency, next_date, active, created_at
       )
       SELECT
-        id, account_id, transfer_to_account_id, category_id, debt_id, type, amount,
+        id,
+        account_id,
+        CASE WHEN transfer_to_account_id IS NOT NULL AND EXISTS (SELECT 1 FROM accounts WHERE accounts.id = recurring_transactions.transfer_to_account_id) THEN transfer_to_account_id ELSE NULL END,
+        CASE WHEN category_id IS NOT NULL AND EXISTS (SELECT 1 FROM categories WHERE categories.id = recurring_transactions.category_id) THEN category_id ELSE NULL END,
+        CASE WHEN debt_id IS NOT NULL AND EXISTS (SELECT 1 FROM debts WHERE debts.id = recurring_transactions.debt_id) THEN debt_id ELSE NULL END,
+        type, amount,
         vendor, notes, frequency, next_date, active, created_at
       FROM recurring_transactions
+      WHERE account_id IS NOT NULL AND EXISTS (SELECT 1 FROM accounts WHERE accounts.id = recurring_transactions.account_id)
     `);
     state.db.run("DROP TABLE recurring_transactions");
     state.db.run("ALTER TABLE recurring_transactions_new RENAME TO recurring_transactions");
-    state.db.run("PRAGMA foreign_keys = ON");
+    changed = true;
   }
   state.db.run("CREATE INDEX IF NOT EXISTS idx_recurring_next_date ON recurring_transactions(next_date)");
   state.db.run("CREATE INDEX IF NOT EXISTS idx_recurring_debt ON recurring_transactions(debt_id)");
@@ -1013,6 +1089,7 @@ function migrateDatabase() {
   });
   if (debtColumns.indexOf("include_in_net_worth") === -1) {
     state.db.run("ALTER TABLE debts ADD COLUMN include_in_net_worth INTEGER NOT NULL DEFAULT 1");
+    changed = true;
   }
   if (Number(scalar("SELECT COUNT(*) count FROM categories", [], "count")) === 0) {
     DEFAULT_CATEGORIES.forEach(function (category) {
@@ -1021,7 +1098,11 @@ function migrateDatabase() {
         category,
       );
     });
+    changed = true;
   }
+  changed = repairForeignKeyReferences() || changed;
+  state.db.run("PRAGMA foreign_keys = ON");
+  return changed;
 }
 
 function categoryId(name, kind) {
@@ -1147,8 +1228,8 @@ async function openDatabase() {
   state.remoteExists = Boolean(remoteInfo);
   state.syncMessage = "";
   state.db = bytes ? new SQL.Database(bytes) : new SQL.Database();
-  migrateDatabase();
-  state.dirty = !bytes;
+  const migrated = migrateDatabase();
+  state.dirty = !bytes || migrated;
   const autoResetResult = await autoResetCurrentMonthBudget();
   if (!autoResetResult.changed) {
     syncDebtBudgetIfNeeded(state.month);
@@ -1159,10 +1240,12 @@ async function openDatabase() {
   updateAuthUi();
   startAutoSyncChecks();
   activateTab("add");
-  if (autoResetResult.changed || recurringResult.created > 0 || recurringResult.advanced > 0) {
+  if (autoResetResult.changed || recurringResult.created > 0 || recurringResult.advanced > 0 || (bytes && migrated)) {
     await saveDatabase();
     if (autoResetResult.changed) {
       showStatus("Budget loaded. New month reset from saved budget with " + autoResetResult.carryCount + " carry-forward categor" + (autoResetResult.carryCount === 1 ? "y" : "ies") + ".");
+    } else if (bytes && migrated) {
+      showStatus("Budget loaded. Repaired saved data references and synced the updated file.");
     } else {
       showStatus("Budget loaded. Added " + recurringResult.created + " recurring transaction(s).");
     }
