@@ -804,6 +804,15 @@ function columnExists(table, column) {
   });
 }
 
+function tableHasForeignKeyTo(table, targetTable) {
+  if (!tableExists(table)) {
+    return false;
+  }
+  return all("PRAGMA foreign_key_list(" + table + ")").some(function (row) {
+    return row.table === targetTable;
+  });
+}
+
 function repairForeignKeyReferences() {
   let changed = false;
   const execRepair = function (sql) {
@@ -981,7 +990,7 @@ function migrateDatabase() {
   const transactionAccountColumn = all("PRAGMA table_info(transactions)").find(function (row) {
     return row.name === "account_id";
   });
-  if (transactionAccountColumn && Number(transactionAccountColumn.notnull || 0) === 1) {
+  if ((transactionAccountColumn && Number(transactionAccountColumn.notnull || 0) === 1) || tableHasForeignKeyTo("transactions", "recurring_transactions")) {
     state.db.run(`
       CREATE TABLE transactions_new (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
